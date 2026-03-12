@@ -63,7 +63,7 @@ def main():
     print("=" * 70)
     print("RAG SYSTEM - Question Answering with Your Vector Database")
     print("=" * 70)
-    GOOGLE_API_KEY = "AIzaSyCS0icRXZnIbVdC97g_qI-T6lJPW_PwDxY"
+    #setx GOOGLE_API_KEY API_KEY 
     MODEL_PATH = "BAAI/bge-m3"
     DB_PATH = "database"
     COLLECTION_NAME = "20230915"
