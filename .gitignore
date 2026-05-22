@@ -1,0 +1,27 @@
+# Environments
+rag_env/
+rag_env_312/
+venv/
+env/
+
+# Environment Variables (Keep secrets out of version control)
+.env
+
+# ChromaDB local database
+database/
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temporary/test files
+result.txt
+test_imports.py
+test_gemini.py
+test_rag.py
+
+# IDEs
+.vscode/
+.idea/

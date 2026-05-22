@@ -1,4 +1,5 @@
 
+
 # RAG Question Answering System
 
 A Retrieval-Augmented Generation (RAG) system that answers questions by searching a local vector database and generating responses using Google's Gemini AI.
@@ -109,3 +110,63 @@ The system supports questions and documents in any language. Answers are always 
 - The embedding model is downloaded automatically on first use
 - The vector database must be pre-populated separately — this script is query-only
 - Similarity scores are displayed as `1 - distance`, so higher is better
+=======
+# Research RAG System
+
+This project is a Retrieval-Augmented Generation (RAG) system built in Python. It allows you to build a local vector database with research data from Wikipedia, ArXiv, and PubMed, and then uses the Google Gemini AI to answer questions based strictly on that local context.
+
+## Features
+
+- **Automated Data Scraping:** `populate_db.py` pulls recent and relevant research from Wikipedia, ArXiv, and PubMed.
+- **Local Vector Database:** Uses `ChromaDB` to store the document chunks and `text2vec` (BAAI/bge-m3) for dense vector embeddings.
+- **AI-Powered Q&A:** `demo.py` provides an interactive terminal to chat with the Google Gemini AI (`gemini-3.5-flash`), completely grounded in your local database.
+
+## Prerequisites
+
+- Python 3.12 (or higher)
+- A Google AI Studio API Key (Free tier works!)
+
+## Setup
+
+1. **Clone the repository:**
+   ```bash
+   git clone <your-repository-url>
+   cd <repository-folder>
+   ```
+
+2. **Set up a virtual environment (optional but recommended):**
+   ```bash
+   python -m venv rag_env
+   .\rag_env\Scripts\activate
+   ```
+
+3. **Install Dependencies:**
+   ```bash
+   pip install chromadb text2vec google-genai python-dotenv wikipedia arxiv biopython
+   ```
+
+4. **Environment Variables:**
+   Create a `.env` file in the root directory (do not commit this file to GitHub) and add the following variables:
+   ```env
+   GOOGLE_API_KEY=your_actual_api_key_here
+   MODEL_PATH=BAAI/bge-m3
+   DB_PATH=database
+   COLLECTION_NAME=research_rag
+   ```
+
+## Usage
+
+**1. Populate the Database:**
+Before asking questions, you need to populate your vector database with the research documents.
+```bash
+python populate_db.py
+```
+
+**2. Chat with the AI:**
+Once the database is populated, launch the interactive query script.
+```bash
+python demo.py
+```
+
+Type your questions into the prompt. The AI will retrieve the most relevant chunks from your database and generate a comprehensive answer!
+

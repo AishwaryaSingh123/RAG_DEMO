@@ -1,6 +1,10 @@
 import chromadb
 from text2vec import SentenceModel
 from google import genai
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class RAG:
     def __init__(self, model_path: str, google_api_key: str,db_path,collection_name):
@@ -47,10 +51,20 @@ Answer:
 
         print("Generating answer with Gemini AI...")
 
-        response = self.client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt
-        )
+        import time
+        for attempt in range(3):
+            try:
+                response = self.client.models.generate_content(
+                    model="gemini-3.5-flash",
+                    contents=prompt
+                )
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < 2:
+                    print(f"Rate limited. Waiting 20 seconds before retrying... (Attempt {attempt+1}/3)")
+                    time.sleep(20)
+                else:
+                    raise e
 
         return {
             "answer": response.text,
@@ -63,10 +77,17 @@ def main():
     print("=" * 70)
     print("RAG SYSTEM - Question Answering with Your Vector Database")
     print("=" * 70)
+
     #setx GOOGLE_API_KEY API_KEY 
     MODEL_PATH = "BAAI/bge-m3"
     DB_PATH = "database"
     COLLECTION_NAME = "20230915"
+
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+    MODEL_PATH = os.getenv("MODEL_PATH", "BAAI/bge-m3")
+    DB_PATH = os.getenv("DB_PATH", "database")
+    COLLECTION_NAME = os.getenv("COLLECTION_NAME", "20230915")
+
     rag = RAG(
         model_path=MODEL_PATH,
         google_api_key=GOOGLE_API_KEY,
@@ -87,12 +108,15 @@ def main():
             print("\n" + "=" * 70)
             print("ANSWER:")
             print("-" * 70)
-            print(result['answer'])
+            # Remove \r which causes PowerShell to overwrite lines
+            clean_answer = str(result['answer']).replace('\r', '')
+            print(clean_answer)
             print("=" * 70)
             print("\nSOURCES (from your database):")
             print("-" * 70)
             for i, (doc, dist) in enumerate(zip(result['sources'], result['distances']), 1):
-                print(f"{i}. [Similarity: {1-dist:.2%}] {doc[:100]}...")
+                clean_doc = str(doc).replace('\n', ' ').replace('\r', '')
+                print(f"{i}. [L2 Distance: {dist:.2f}] {clean_doc[:100]}...")
             print("=" * 70 + "\n")
         except Exception as e:
             print(f"\nError: {str(e)}\n")
