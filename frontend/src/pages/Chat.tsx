@@ -51,6 +51,7 @@ export default function Chat() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       
+      console.log('REQUEST_START', { question: text, top_k: 3 });
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -60,8 +61,10 @@ export default function Chat() {
         body: JSON.stringify({ question: text, top_k: 3 }),
       });
 
-      if (!res.ok) throw new Error('Chat API failed');
+      console.log('RESPONSE_STATUS', res.status, res.statusText);
+      if (!res.ok) throw new Error(`Chat API failed: ${res.status} ${res.statusText}`);
       const data = await res.json();
+      console.log('RESPONSE_JSON', data);
       
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -71,11 +74,11 @@ export default function Chat() {
           similarity: data.distances?.[i] || 0
         }))
       }]);
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error('CHAT_ERROR', err);
       setMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: 'Sorry, I encountered an error. Is the backend API running on port 9000?' 
+        content: `Sorry, I encountered an error: ${err.message || 'Unknown error'}. Is the backend API running on port 8000?` 
       }]);
     } finally {
       setLoading(false);

@@ -81,7 +81,7 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]
     return [c.strip() for c in chunks if len(c.strip()) > 15]
 
 
-def add_chunks_to_db(chunks: list[str], source_name: str, source_type: str):
+def add_chunks_to_db(chunks: list[str], source_name: str, source_type: str, user_id: str = "system", is_global: bool = True):
     """
     Computes vector embeddings for a list of text chunks and inserts them into ChromaDB.
     Prefixes documents with '[SourceType: SourceName]' to easily surface citation in the frontend.
@@ -113,14 +113,71 @@ def add_chunks_to_db(chunks: list[str], source_name: str, source_type: str):
         documents=prefixed_docs,
         embeddings=embeddings_list,
         ids=ids,
-        metadatas=[{"source": source_name, "type": source_type}] * len(prefixed_docs)
+        metadatas=[{"source": source_name, "type": source_type, "user_id": user_id, "is_global": is_global}] * len(prefixed_docs)
     )
     
+    # Store chunks and keywords in SQLite FTS5
+    import sqlite3
+    db_file = os.path.join(DB_PATH, "db.sqlite3")
+    try:
+        conn = sqlite3.connect(db_file)
+        cursor = conn.cursor()
+        
+        # Ensure documents table exists (run init if needed)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                source_type TEXT NOT NULL,
+                kb_id TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS document_chunks (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                content TEXT NOT NULL
+            )
+        """)
+        cursor.execute("CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_fts USING fts5(chunk_id UNINDEXED, content)")
+        
+        # Get or create document reference
+        cursor.execute("SELECT id FROM documents WHERE filename = ?", (source_name,))
+        row = cursor.fetchone()
+        if row:
+            doc_id = row[0]
+        else:
+            import uuid
+            doc_id = str(uuid.uuid4())
+            cursor.execute(
+                "INSERT INTO documents (id, user_id, filename, source_type) VALUES (?, ?, ?, ?)",
+                (doc_id, user_id, source_name, source_type)
+            )
+        
+        # Write chunks to SQLite and FTS5
+        for chunk_id, chunk_text in zip(ids, prefixed_docs):
+            cursor.execute(
+                "INSERT OR REPLACE INTO document_chunks (id, document_id, user_id, content) VALUES (?, ?, ?, ?)",
+                (chunk_id, doc_id, user_id, chunk_text)
+            )
+            cursor.execute(
+                "INSERT OR REPLACE INTO document_chunks_fts (chunk_id, content) VALUES (?, ?)",
+                (chunk_id, chunk_text)
+            )
+        conn.commit()
+        conn.close()
+        print(f"Indexed {len(prefixed_docs)} chunks in SQLite FTS5.")
+    except Exception as sqle:
+        print(f"Warning: Failed to index in SQLite FTS5: {sqle}")
+
     print(f"Ingested '{source_name}' successfully ({len(prefixed_docs)} chunks).")
     return len(prefixed_docs)
 
 
-def ingest_wikipedia_topic(topic: str) -> int:
+def ingest_wikipedia_topic(topic: str, user_id: str = "system", is_global: bool = True) -> int:
     """
     Scrapes Wikipedia for a topic, chunks its content, and populates ChromaDB.
     """
@@ -139,13 +196,13 @@ def ingest_wikipedia_topic(topic: str) -> int:
         content = re.split(r'==\s*(See also|References|External links|Notes)\s*==', content)[0]
         
         chunks = chunk_text(content)
-        return add_chunks_to_db(chunks, page_title, "Wikipedia")
+        return add_chunks_to_db(chunks, page_title, "Wikipedia", user_id=user_id, is_global=is_global)
     except Exception as e:
         print(f"Wikipedia Ingestion Error for '{topic}': {e}")
         raise e
 
 
-def ingest_arxiv_query(query: str, max_results: int = 5) -> int:
+def ingest_arxiv_query(query: str, max_results: int = 5, user_id: str = "system", is_global: bool = True) -> int:
     """
     Queries arXiv for research abstracts, chunks summaries, and populates ChromaDB.
     """
@@ -169,7 +226,7 @@ def ingest_arxiv_query(query: str, max_results: int = 5) -> int:
             # Combine paper metadata and abstract text
             full_text = f"Title: {paper.title}. Authors: {', '.join(auth.name for auth in paper.authors)}. Published: {paper.published.strftime('%Y-%m')}. Summary: {paper.summary}"
             chunks = chunk_text(full_text, chunk_size=600)
-            total_ingested += add_chunks_to_db(chunks, paper.title, "arXiv")
+            total_ingested += add_chunks_to_db(chunks, paper.title, "arXiv", user_id=user_id, is_global=is_global)
             
         return total_ingested
     except Exception as e:
@@ -177,7 +234,7 @@ def ingest_arxiv_query(query: str, max_results: int = 5) -> int:
         raise e
 
 
-def ingest_pubmed_query(query: str, max_results: int = 5) -> int:
+def ingest_pubmed_query(query: str, max_results: int = 5, user_id: str = "system", is_global: bool = True) -> int:
     """
     Queries PubMed for medical papers, chunks abstracts, and populates ChromaDB.
     """
@@ -220,7 +277,7 @@ def ingest_pubmed_query(query: str, max_results: int = 5) -> int:
                 
             full_text = f"Title: {title}. Abstract: {abstract}"
             chunks = chunk_text(full_text, chunk_size=600)
-            total_ingested += add_chunks_to_db(chunks, title[:80], "PubMed")
+            total_ingested += add_chunks_to_db(chunks, title[:80], "PubMed", user_id=user_id, is_global=is_global)
             
         return total_ingested
     except Exception as e:
@@ -228,14 +285,14 @@ def ingest_pubmed_query(query: str, max_results: int = 5) -> int:
         raise e
 
 
-def ingest_text_content(name: str, content: str, source_type: str = "File") -> int:
+def ingest_text_content(name: str, content: str, source_type: str = "File", user_id: str = "system", is_global: bool = True) -> int:
     """
     Ingests arbitrary text content (e.g. from uploaded files).
     """
     print(f"\n[FILE INGESTION] Ingesting '{name}' as source {source_type}...")
     try:
         chunks = chunk_text(content)
-        return add_chunks_to_db(chunks, name, source_type)
+        return add_chunks_to_db(chunks, name, source_type, user_id=user_id, is_global=is_global)
     except Exception as e:
         print(f"File Ingestion Error for '{name}': {e}")
         raise e

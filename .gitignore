@@ -21,6 +21,9 @@ result.txt
 test_imports.py
 test_gemini.py
 test_rag.py
+tests/
+app.py
+demo.py
 
 # IDEs
 .vscode/

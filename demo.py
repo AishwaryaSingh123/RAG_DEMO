@@ -18,24 +18,97 @@ class RAG:
         print("RAG system ready!\n")
         
     def ask(self, question: str, top_k: int = 3):
+        import sqlite3
+        import numpy as np
 
         print(f"\nSearching database for: '{question}'")
 
+        # 1. Dense Vector Search (Retrieve Top 10)
         query_vector = self.embedding_model.encode([question])
-        query_vector = [vec.tolist() for vec in query_vector]
+        query_vector_list = [vec.tolist() for vec in query_vector]
 
         results = self.collection.query(
-            query_embeddings=query_vector,
-            n_results=top_k
+            query_embeddings=query_vector_list,
+            n_results=10
         )
+        dense_documents = results["documents"][0] if results.get("documents") else []
+        dense_ids = results["ids"][0] if results.get("ids") else []
 
-        documents = results["documents"][0]
-        distances = results["distances"][0]
+        # 2. SQLite FTS5 Keyword Search (Retrieve Top 10)
+        keyword_results = []
+        try:
+            # Use same db_path
+            db_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "database", "db.sqlite3")
+            if not os.path.exists(db_file):
+                # Fallback to current directory database
+                db_file = os.path.join("database", "db.sqlite3")
+            
+            if os.path.exists(db_file):
+                conn = sqlite3.connect(db_file)
+                cursor = conn.cursor()
+                # Clean special characters to avoid FTS syntax errors
+                cleaned_query = "".join(c if c.isalnum() or c.isspace() else " " for c in question).strip()
+                if cleaned_query:
+                    # Parse into words and join with OR or AND
+                    fts_query = " OR ".join(cleaned_query.split())
+                    cursor.execute(
+                        "SELECT chunk_id, content FROM document_chunks_fts WHERE content MATCH ? LIMIT 10",
+                        (fts_query,)
+                    )
+                    keyword_results = cursor.fetchall()
+                conn.close()
+        except Exception as e:
+            print(f"Warning: Keyword search failed: {e}")
 
-        print(f"Found {len(documents)} relevant documents")
+        # 3. Reciprocal Rank Fusion (RRF)
+        rrf_k = 60
+        scores = {}
+        content_map = {}
+
+        # Rank dense results
+        for rank, (chunk_id, doc_text) in enumerate(zip(dense_ids, dense_documents), 1):
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + (1.0 / (rrf_k + rank))
+            content_map[chunk_id] = doc_text
+
+        # Rank keyword results
+        for rank, (chunk_id, doc_text) in enumerate(keyword_results, 1):
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + (1.0 / (rrf_k + rank))
+            content_map[chunk_id] = doc_text
+
+        # 4. Reranking / Selecting Top Candidates
+        sorted_chunks = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        candidate_ids = [chunk_id for chunk_id, score in sorted_chunks[:top_k * 2]]
+        
+        # Calculate final cosine similarity reranking for top candidates
+        reranked_results = []
+        if candidate_ids:
+            candidate_texts = [content_map[cid] for cid in candidate_ids]
+            candidate_embeddings = self.embedding_model.encode(candidate_texts)
+            
+            q_vec = query_vector[0]
+            q_norm = np.linalg.norm(q_vec)
+            
+            for cid, text, emb in zip(candidate_ids, candidate_texts, candidate_embeddings):
+                emb_norm = np.linalg.norm(emb)
+                sim = float(np.dot(q_vec, emb) / (q_norm * emb_norm)) if q_norm > 0 and emb_norm > 0 else 0.0
+                reranked_results.append((text, sim))
+                
+            # Sort by cosine similarity descending
+            reranked_results.sort(key=lambda x: x[1], reverse=True)
+
+        # Final top_k chunks
+        final_candidates = reranked_results[:top_k]
+        documents = [item[0] for item in final_candidates]
+        distances = [1.0 - item[1] for item in final_candidates] # Convert cosine similarity to distance
+
+        print(f"Found {len(documents)} relevant documents (fused BM25 + Vector)")
+
+        # Sort documents in prompt context to place most relevant at the end
+        # (reduces "lost in the middle" LLM bias)
+        context_docs = list(reversed(documents))
 
         context = "\n\n".join(
-            [f"Document {i+1}: {doc}" for i, doc in enumerate(documents)]
+            [f"Document {i+1}: {doc}" for i, doc in enumerate(context_docs)]
         )
 
         prompt = f"""Answer the question based on the provided context. 
